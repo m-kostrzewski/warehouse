@@ -15,11 +15,8 @@ class warehouse extends Module {
         if($this->get_module_variable("view") == null){
             $this->set_module_variable("view","main");
         }
-
-
         $theme = $this->init_module('Base/Theme');
         //$form = $this->init_module('Libs/QuickForm');
-
         //viev prepare block
         $viewType = '';
         if(isset($_REQUEST['view'])){
@@ -33,10 +30,10 @@ class warehouse extends Module {
         }
         if($viewType == "warehouseView"){
             $this->set_module_variable("view","warehouseView");
-            $this->set_module_variable("warehouseID", $_REQUEST['warehouseID']);
+            if($_REQUEST['warehouseID']){
+                $this->set_module_variable("warehouseID", $_REQUEST['warehouseID']);
+            }
         }
-
-
 
         //view display block
         $view = $this->get_module_variable("view");
@@ -59,9 +56,105 @@ class warehouse extends Module {
             $theme->assign("warehouseList",$list);
         }
         if($view == "showWithdraws"){
-            $rs = new RBO_RecordsetAccessor('warehouseWithdraw');
-            $rb = $rs->create_rb_module ( $this );
-            $this->display_module ( $rb);
+            Base_ActionBarCommon::add(
+                'back',
+                __("Back"), 
+                $this->create_href(array("view" => "warehouseView")),
+                    null,
+                    1
+            );
+            $form = $this->init_module('Libs/QuickForm');
+            $rboRecord = new RBO_RecordsetAccessor("warehouseItems");
+            $records = $rboRecord->get_records(array('warehouse'=>$this->get_module_variable("warehouseID")),array(),array());
+            $items = array(''=>'---');
+            foreach($records as $record){
+                $items[$record['id']] = $record['name'];
+            }
+            $crits = array();
+            $fcallback = array('warehouseCommon','contact_format_contact');
+            $form->addElement('autoselect', 'contactSelect', 'Wybierz pracownika', array(),
+                array(array('warehouseCommon','autoselect_contact'), array($crits, $fcallback)), $fcallback);
+            $form->addElement("datepicker","from", "Od");
+            $form->addElement("datepicker","to", "Do");
+            $form->addElement("select","item", "Przedmiot", $items);
+            $form->addElement("submit","save", "Filtruj",array("class" => "button"));
+            $form->display_as_row();
+
+            $filters = array('_active'=>1 );
+            if($form->validate()){
+                $values =$form->exportValues();
+                if($values['from'] != '' && count($values['from'])){
+                    $filters['>=date'] = $values['from'];
+                }
+                if($values['to'] != '' && count($values['to'])){
+                    $filters['<=date'] = $values['to'];
+                }
+                if($values['item'] != '' && count($values['item'])){
+                    $filters['item'] = $values['item'];
+                }
+                if($values['contactSelect'] != '' && count($values['contactSelect'])){
+                    $filters['contact'] = $values['contactSelect'];
+                }
+                $this->set_module_variable("filters",$filters);
+            }
+            if($this->get_module_variable("filters")){
+                $filters = $this->get_module_variable("filters");
+            }
+            $rboWithdraws = new RBO_RecordsetAccessor("warehouseWithdraw");
+            $pages = $rboWithdraws->get_records_count($filters);
+            if($pages > 25){
+                $pages = $pages / 25;
+                $pages = floor($pages);
+                if($_REQUEST['page'])
+                    $this->set_module_variable("currentPage",$_REQUEST['page']);
+                else
+                    $this->set_module_variable("currentPage",'0');
+
+                $page = $this->get_module_variable("currentPage");
+                $max = $pages;
+                $pagerStart = $page - 3;
+                $pageEnd = $page + 3;
+                if($pagerStart < 0){
+                    $pagerStart = 0;
+                }
+                if($pageEnd >= $max){
+                    $pageEnd = $max;
+                }
+    
+                for($start = $pagerStart; $start <= $pageEnd;$start++){
+                    $value = $start;
+                    $display = $start + 1;
+                    $link = $this->create_href(array("page" => $value));
+                    if($value == $page){
+                        $pageList[] =  "<a class='links' style='color:#000000;font-weight:bold;' $link>$display</a>";
+                    }else{  
+                        $pageList[] =  "<a class='links' $link>$display</a>";
+                    }
+                }
+                $filters = $this->get_module_variable("filters");
+            }
+            $theme->assign("pages",$pageList);
+
+            $records = $rboWithdraws->get_records($filters,array(),array("date" => "DESC"),array( 'numrows'=>25 ,'offset'=>$page * 25));
+            foreach($records as $record){
+                $record['item'] = $record->get_val("item");
+                $record['contact'] = $record->get_val("contact");
+            }
+            $theme->assign("records",$records);
+            $theme->display($view);
+            load_js($this->get_module_dir()."js/jquery.tablesorter.min.js");
+            load_js($this->get_module_dir()."jquery.tablesorter.widgets.min.js");
+            load_js($this->get_module_dir().'js/analis.js');
+            Base_ThemeCommon::load_css('warehouse','theme.default.min');
+            eval_js("	jq(function(){
+                jq('.data-table').tablesorter({
+                    widgets        : ['zebra', 'columns'],
+                    usNumberFormat : false,
+                    sortReset      : true,
+                    sortRestart    : true
+                });
+            });");
+            load_js($this->get_module_dir().'/main.js');
 
         }
         if($view == 'warehouseView'){
@@ -83,8 +176,7 @@ class warehouse extends Module {
                 );
                 $action = 'deposit';
             }
-            else{
-                
+            else{ 
                 Base_ActionBarCommon::add(
                     'add',
                     __("Dostawa towaru"), 
@@ -116,7 +208,6 @@ class warehouse extends Module {
                 $form->addElement('autoselect', 'contactSelect', 'Wybierz pracownika', array(),
                     array(array('warehouseCommon','autoselect_contact'), array($crits, $fcallback)), $fcallback);
                 $form->toHtml();
-
                 $form->assign_theme('my_form', $theme);
 
             }
@@ -130,11 +221,10 @@ class warehouse extends Module {
         }
         if($view != 'showWithdraws'){
             Base_ThemeCommon::load_css('warehouse','default');
+            
             $theme->display($view);
             load_js($this->get_module_dir().'/main.js');
         }
-
-
     }
     public function settings()
     {
